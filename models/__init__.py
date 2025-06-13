@@ -5,18 +5,6 @@ This package contains SQLAlchemy models for the educational data system.
 Includes all core ETL models plus additional analytics, relationships, and processing models.
 """
 
-# Mock database session for testing purposes
-class MockDB:
-    """Mock database session for testing"""
-    def commit(self):
-        pass
-    
-    def rollback(self):
-        pass
-
-# Global mock db session
-db = MockDB()
-
 from .base import Base
 from .enums import *
 from .core import School
@@ -37,7 +25,6 @@ from .configuration import SystemConfiguration
 
 __all__ = [
     'Base',
-    'db',  # Add mock database session
     # Enums
     'SchoolStatus', 'SchoolOwnership', 'SchoolOperationalModel',
     'SchoolType', 'VirtualInstruction',

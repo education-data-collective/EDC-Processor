@@ -6,7 +6,7 @@ from .base import Base
 from .enums import SchoolStatus, SchoolOwnership, SchoolOperationalModel
 
 class SchoolDirectoryData(Base):
-    __tablename__ = 'school_directory_data'
+    __tablename__ = 'school_directory'
     
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey('schools.id'), nullable=False)
@@ -15,6 +15,7 @@ class SchoolDirectoryData(Base):
     
     # Directory data that changes over time
     ncessch = Column(String(12))
+    state_school_id = Column(String(50))  # ST_SCHID from NCES data
     system_name = Column(String(100), nullable=False)  # Original name as provided by data source
     lea_name = Column(String(100))
     state_name = Column(String(50))
@@ -42,6 +43,7 @@ class SchoolDirectoryData(Base):
         UniqueConstraint('school_id', 'data_year', name='uix_school_directory_year'),
         Index('idx_school_directory_current', school_id, is_current),
         Index('idx_school_directory_ncessch', ncessch),
+        Index('idx_school_directory_state_school_id', state_school_id),
         Index('idx_school_directory_year', data_year),
         Index('idx_school_directory_status', status),
         Index('idx_school_directory_ownership_model', ownership, operational_model),

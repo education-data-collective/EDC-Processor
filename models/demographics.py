@@ -17,25 +17,6 @@ class EsriDemographicData(Base):
     location_id = Column(Integer, ForeignKey('location_points.id'), nullable=False)
     drive_time = Column(Integer)
     
-    # Population data
-    total_population = Column(Integer)
-    household_count = Column(Integer)
-    average_household_size = Column(Float)
-    
-    # Age distribution - broad ranges (existing)
-    age_under_5 = Column(Integer)
-    age_5_to_9 = Column(Integer)
-    age_10_to_14 = Column(Integer)
-    age_15_to_19 = Column(Integer)
-    age_20_to_24 = Column(Integer)
-    age_25_to_34 = Column(Integer)
-    age_35_to_44 = Column(Integer)
-    age_45_to_54 = Column(Integer)
-    age_55_to_64 = Column(Integer)
-    age_65_to_74 = Column(Integer)
-    age_75_to_84 = Column(Integer)
-    age_85_plus = Column(Integer)
-    
     # Age distribution - specific single-year ages (Current Year)
     age4_cy = Column(Float)
     age5_cy = Column(Float)
@@ -84,13 +65,6 @@ class EsriDemographicData(Base):
     age16_c20 = Column(Float)
     age17_c20 = Column(Float)
     
-    # Race/Ethnicity - basic (existing)
-    white_population = Column(Integer)
-    black_population = Column(Integer)
-    asian_population = Column(Integer)
-    hispanic_population = Column(Integer)
-    other_race_population = Column(Integer)
-    
     # Adult population by race/ethnicity (2020)
     nhadltwh20 = Column(Float)  # Non-Hispanic White Adults
     nhadltbl20 = Column(Float)  # Non-Hispanic Black Adults
@@ -111,7 +85,7 @@ class EsriDemographicData(Base):
     nhmu18_c20 = Column(Float)  # Non-Hispanic Two or More Race Under 18
     hu18_rbs20 = Column(Float)  # Hispanic Under 18
     
-    # Calculated percentage fields for adults (2020)
+    # Percentage fields for adults (2020)
     per_hisp_adult_20 = Column(Float)  # Percent Hispanic Adult
     per_wht_adult_20 = Column(Float)   # Percent White Adult
     per_blk_adult_20 = Column(Float)   # Percent Black Adult
@@ -121,7 +95,7 @@ class EsriDemographicData(Base):
     per_other_adult_20 = Column(Float) # Percent Other Adult
     per_two_or_more_adult_20 = Column(Float) # Percent Two or More Race Adult
     
-    # Calculated percentage fields for children (2020) - MISSING FROM PREVIOUS MODEL
+    # Percentage fields for children (2020)
     per_hisp_child_20 = Column(Float)  # Percent Hispanic Child
     per_wht_child_20 = Column(Float)   # Percent White Child
     per_blk_child_20 = Column(Float)   # Percent Black Child
@@ -131,10 +105,6 @@ class EsriDemographicData(Base):
     per_other_child_20 = Column(Float) # Percent Other Child
     per_two_or_more_child_20 = Column(Float) # Percent Two or More Race Child
     
-    # Income data - basic (existing)
-    median_household_income = Column(Integer)
-    per_capita_income = Column(Integer)
-    
     # Income data - detailed (matching original field names)
     medhinc_cy = Column(Float)         # Median Household Income Current Year
     hincbasecy = Column(Float)         # Household Income Base Current Year
@@ -143,11 +113,6 @@ class EsriDemographicData(Base):
     hinc25_cy = Column(Float)          # Household Income $25-35k Current Year
     hinc35_cy = Column(Float)          # Household Income $35-50k Current Year
     per_50k_cy = Column(Float)         # Percent Households Income $50k+ Current Year
-    
-    # Housing data - basic (existing)
-    owner_occupied_units = Column(Integer)
-    renter_occupied_units = Column(Integer)
-    vacant_units = Column(Integer)
     
     # Housing data - detailed (matching original field names)
     tothu_cy = Column(Float)           # Total Housing Units Current Year
@@ -161,17 +126,17 @@ class EsriDemographicData(Base):
     area_type = Column(String(50))
     buffer_units = Column(String(20))
     buffer_units_alias = Column(String(50))
-    buffer_radii = Column(Float)       # Changed to Float to match original
+    buffer_radii = Column(Float)       
     aggregation_method = Column(String(50))
-    population_to_polygon_size_rating = Column(Float)  # Changed to Float to match original
-    apportionment_confidence = Column(Float)           # Changed to Float to match original
+    population_to_polygon_size_rating = Column(Float)  
+    apportionment_confidence = Column(Float)           
     has_data = Column(Integer)
     
     # Drive time polygon storage
     drive_time_polygon = Column(Text)  # Store polygon as text/JSON
     
-    # Timestamp
-    timestamp = Column(DateTime, server_default=func.now())
+    # Timestamp (from source ESRI data)
+    timestamp = Column(DateTime)
     
     # Relationships
     location = relationship("LocationPoint", back_populates="esri_data")
