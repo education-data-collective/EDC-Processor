@@ -14,7 +14,6 @@ pgcli>=3.5.0  # PostgreSQL CLI with autocomplete
 
 # API Testing
 httpie>=3.2.0
-postman-cli>=1.0.0
 
 # Code Quality
 bandit>=1.7.5  # Security linting

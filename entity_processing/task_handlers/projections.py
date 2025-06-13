@@ -9,7 +9,7 @@ from flask import current_app
 from models import School, SchoolEnrollment, SchoolProjection
 from ..utils import success_response, error_response, update_processing_status
 from datetime import datetime
-from app import db
+from models import db
 
 
 async def process_projections(payload):

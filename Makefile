@@ -5,7 +5,12 @@ help:
 	@echo "Available commands:"
 	@echo "  install      Install production dependencies"
 	@echo "  install-dev  Install development dependencies"
-	@echo "  test         Run tests"
+	@echo "  test         Run all tests"
+	@echo "  test-unit    Run unit tests only (fast, mocked)"
+	@echo "  test-integration Run integration tests (slower, real services)"
+	@echo "  test-integration-db Run database integration tests"
+	@echo "  test-integration-firebase Run Firebase integration tests"
+	@echo "  test-fast    Run only unit tests with minimal output"
 	@echo "  test-cov     Run tests with coverage report"
 	@echo "  lint         Run linting tools"
 	@echo "  format       Format code with black and isort"
@@ -31,10 +36,24 @@ test-cov:
 	pytest --cov=entity_processing --cov=models --cov-report=html --cov-report=term-missing
 
 test-unit:
-	pytest -m "unit"
+	pytest -m "unit" -v
 
 test-integration:
-	pytest -m "integration"
+	pytest -m "integration" -v --tb=short
+
+test-integration-db:
+	@echo "Running database integration tests..."
+	pytest tests/integration/test_database_integration.py -v
+
+test-integration-firebase:
+	@echo "Running Firebase integration tests..."
+	pytest tests/integration/test_firebase_integration.py -v
+
+test-all:
+	pytest -v
+
+test-fast:
+	pytest -m "unit" --tb=short --no-cov
 
 # Code Quality
 lint:

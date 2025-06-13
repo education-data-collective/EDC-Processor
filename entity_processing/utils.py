@@ -69,7 +69,7 @@ def determine_applicable_stages(entity_info, entity_type):
 def update_processing_status(entity_id, entity_type, stage, status, data_year=None):
     """Update processing status in database"""
     from datetime import datetime
-    from app import db
+    from models import db
     from models import ProcessingStatus
     
     if entity_type != 'school':

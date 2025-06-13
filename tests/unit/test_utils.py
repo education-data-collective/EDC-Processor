@@ -11,6 +11,7 @@ from entity_processing.utils import (
 )
 
 
+@pytest.mark.unit
 class TestResponseHelpers:
     """Test response helper functions."""
     
@@ -57,6 +58,7 @@ class TestResponseHelpers:
         assert response['details'] == details
 
 
+@pytest.mark.unit
 class TestEntityValidation:
     """Test entity validation functions."""
     

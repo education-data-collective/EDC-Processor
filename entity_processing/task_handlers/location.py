@@ -6,10 +6,9 @@ Works with both school locations and standalone location points.
 """
 
 from flask import current_app
-from models import School, LocationPoint, SchoolLocation
+from models import School, LocationPoint, SchoolLocation, db
 from ..utils import success_response, error_response, update_processing_status
 from datetime import datetime
-from app import db
 
 
 async def process_location_data(payload):
