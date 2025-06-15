@@ -245,7 +245,7 @@ def find_locations_needing_processing(engine, data_year, edc_schools=None, force
                     lp.id as location_id,
                     lp.latitude,
                     lp.longitude,
-                    s.school_id,
+                    COALESCE(CONCAT(sd.ncessch, '-', sd.split_suffix), sd.ncessch, sd.state_school_id) as school_id,
                     s.uuid as school_uuid,
                     sl.data_year,
                     CASE WHEN spr.id IS NOT NULL THEN 'Yes' ELSE 'No' END as has_nearby_data,
@@ -253,6 +253,7 @@ def find_locations_needing_processing(engine, data_year, edc_schools=None, force
                 FROM location_points lp
                 JOIN school_locations sl ON lp.id = sl.location_id
                 JOIN schools s ON sl.school_id = s.id
+                JOIN school_directory sd ON s.id = sd.school_id AND sd.is_current = true
                 LEFT JOIN school_polygon_relationships spr ON lp.id = spr.location_id 
                     AND spr.data_year = :data_year
                 LEFT JOIN (
@@ -271,7 +272,9 @@ def find_locations_needing_processing(engine, data_year, edc_schools=None, force
             
             # Filter for EDC schools if specified
             if edc_schools:
-                conditions.append("s.school_id = ANY(:edc_schools)")
+                conditions.append("""(sd.ncessch = ANY(:edc_schools) 
+                                   OR CONCAT(sd.ncessch, '-', sd.split_suffix) = ANY(:edc_schools)
+                                   OR sd.state_school_id = ANY(:edc_schools))""")
                 params['edc_schools'] = list(edc_schools)
             
             # Filter based on refresh mode
@@ -322,21 +325,29 @@ def process_location_nearby_schools(engine, location_id, data_year):
         print(f"🔍 Processing location {location_id} for year {data_year}...")
         
         # Use the imported function from fetch.py
-        success = process_nearby_schools_for_location(engine, location_id, data_year)
-        
-        if success:
-            # Validate the results
-            validation_result = validate_nearby_school_results(engine, location_id, data_year)
-            if validation_result['is_valid']:
-                print(f"✅ Successfully processed location {location_id}")
-                print(f"  📊 {validation_result['polygon_count']} polygons created")
-                print(f"  🏫 {validation_result['school_count']} nearby schools found")
-                return True
+        if process_nearby_schools_for_location:
+            success = process_nearby_schools_for_location(engine, location_id, data_year)
+            
+            if success:
+                # Validate the results
+                if validate_nearby_school_results:
+                    validation_result = validate_nearby_school_results(engine, location_id, data_year)
+                    if validation_result['is_valid']:
+                        print(f"✅ Successfully processed location {location_id}")
+                        print(f"  📊 {validation_result['polygon_count']} polygons created")
+                        print(f"  🏫 {validation_result['school_count']} nearby schools found")
+                        return True
+                    else:
+                        print(f"⚠️  Validation failed for location {location_id}: {validation_result['error']}")
+                        return False
+                else:
+                    print(f"✅ Successfully processed location {location_id} (validation skipped)")
+                    return True
             else:
-                print(f"⚠️  Validation failed for location {location_id}: {validation_result['error']}")
+                print(f"❌ Failed to process location {location_id}")
                 return False
         else:
-            print(f"❌ Failed to process location {location_id}")
+            print(f"❌ Processing function not available from fetch module")
             return False
             
     except Exception as e:
@@ -478,7 +489,9 @@ def validate_processing_completeness(engine, data_year, edc_schools=None):
             edc_filter = ""
             
             if edc_schools:
-                edc_filter = "AND s.school_id = ANY(:edc_schools)"
+                edc_filter = """AND (sd.ncessch = ANY(:edc_schools) 
+                              OR CONCAT(sd.ncessch, '-', sd.split_suffix) = ANY(:edc_schools)
+                              OR sd.state_school_id = ANY(:edc_schools))"""
                 params['edc_schools'] = list(edc_schools)
             
             # Check processing completeness
@@ -492,6 +505,7 @@ def validate_processing_completeness(engine, data_year, edc_schools=None):
                 FROM location_points lp
                 JOIN school_locations sl ON lp.id = sl.location_id
                 JOIN schools s ON sl.school_id = s.id
+                JOIN school_directory sd ON s.id = sd.school_id AND sd.is_current = true
                 LEFT JOIN school_polygon_relationships spr ON lp.id = spr.location_id 
                     AND spr.data_year = :data_year
                 LEFT JOIN nearby_school_polygons nsp ON spr.id = nsp.polygon_relationship_id

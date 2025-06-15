@@ -339,10 +339,14 @@ def get_edc_schools_nearby_coverage(engine, edc_schools, data_year=None):
             
         with engine.connect() as conn:
             # Convert EDC school IDs to UUIDs for matching
+            # Join with school_directory to match NCES IDs
             edc_uuids_result = conn.execute(text("""
-                SELECT DISTINCT uuid 
-                FROM schools 
-                WHERE school_id = ANY(:school_ids)
+                SELECT DISTINCT s.uuid 
+                FROM schools s
+                JOIN school_directory sd ON s.id = sd.school_id
+                WHERE sd.ncessch = ANY(:school_ids) 
+                   OR CONCAT(sd.ncessch, '-', sd.split_suffix) = ANY(:school_ids)
+                   OR sd.state_school_id = ANY(:school_ids)
             """), {'school_ids': list(edc_schools)}).fetchall()
             
             edc_uuids = [row[0] for row in edc_uuids_result]
@@ -634,6 +638,250 @@ def print_analysis_report(summary, drive_time_breakdown, coverage_analysis, edc_
     
     print("\n" + "="*80)
 
+
+
+def validate_data_integrity(engine, data_year=None):
+    """Validate data integrity across related tables"""
+    try:
+        with engine.connect() as conn:
+            params = {}
+            where_clause = ""
+            if data_year:
+                where_clause = "WHERE spr.data_year = :data_year"
+                params['data_year'] = data_year
+            
+            # Check for orphaned nearby_school_polygons
+            orphaned_nearby = conn.execute(text(f"""
+                SELECT COUNT(*) 
+                FROM nearby_school_polygons nsp
+                LEFT JOIN school_polygon_relationships spr ON nsp.polygon_relationship_id = spr.id
+                WHERE spr.id IS NULL
+            """)).scalar() or 0
+            
+            # Check for polygon relationships without nearby schools
+            empty_relationships = conn.execute(text(f"""
+                SELECT COUNT(*)
+                FROM school_polygon_relationships spr
+                LEFT JOIN nearby_school_polygons nsp ON spr.id = nsp.polygon_relationship_id
+                {where_clause}
+                GROUP BY spr.id
+                HAVING COUNT(nsp.id) = 0
+            """), params).fetchall()
+            
+            empty_count = len(empty_relationships)
+            
+            # Check for invalid school UUIDs
+            invalid_uuids = conn.execute(text(f"""
+                SELECT COUNT(DISTINCT nsp.school_uuid)
+                FROM nearby_school_polygons nsp
+                JOIN school_polygon_relationships spr ON nsp.polygon_relationship_id = spr.id
+                LEFT JOIN schools s ON nsp.school_uuid = s.uuid
+                WHERE s.uuid IS NULL
+                {f"AND spr.data_year = :data_year" if data_year else ""}
+            """), params).scalar() or 0
+            
+            # Check for missing location coordinates
+            missing_coords = conn.execute(text(f"""
+                SELECT COUNT(DISTINCT spr.location_id)
+                FROM school_polygon_relationships spr
+                JOIN location_points lp ON spr.location_id = lp.id
+                WHERE lp.latitude IS NULL OR lp.longitude IS NULL
+                {f"AND spr.data_year = :data_year" if data_year else ""}
+            """), params).scalar() or 0
+            
+            validation_results = {
+                'orphaned_nearby_schools': orphaned_nearby,
+                'empty_polygon_relationships': empty_count,
+                'invalid_school_uuids': invalid_uuids,
+                'missing_coordinates': missing_coords,
+                'has_issues': orphaned_nearby > 0 or empty_count > 0 or invalid_uuids > 0 or missing_coords > 0
+            }
+            
+            return validation_results
+            
+    except Exception as e:
+        print(f"❌ Error validating data integrity: {str(e)}")
+        return None
+
+def export_detailed_analysis(engine, data_year=None):
+    """Export detailed analysis to CSV files"""
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        year_suffix = f"_{data_year}" if data_year else "_all_years"
+        
+        with engine.connect() as conn:
+            # Export location coverage details
+            params = {}
+            where_clause = ""
+            if data_year:
+                where_clause = "WHERE sl.data_year = :data_year"
+                params['data_year'] = data_year
+            
+            coverage_query = text(f"""
+                SELECT 
+                    lp.id as location_id,
+                    lp.latitude,
+                    lp.longitude,
+                    lp.city,
+                    lp.state,
+                    COUNT(DISTINCT sl.school_id) as schools_at_location,
+                    COUNT(DISTINCT spr.id) as polygon_relationships,
+                    COUNT(DISTINCT spr.drive_time) as drive_times_available,
+                    array_agg(DISTINCT spr.drive_time ORDER BY spr.drive_time) 
+                        FILTER (WHERE spr.drive_time IS NOT NULL) as drive_times,
+                    COUNT(DISTINCT nsp.id) as total_nearby_schools,
+                    COUNT(DISTINCT nsp.school_uuid) as unique_nearby_schools,
+                    CASE WHEN esri.location_id IS NOT NULL THEN 'Yes' ELSE 'No' END as has_esri_data
+                FROM location_points lp
+                JOIN school_locations sl ON lp.id = sl.location_id
+                LEFT JOIN school_polygon_relationships spr ON lp.id = spr.location_id 
+                    {f"AND spr.data_year = :data_year" if data_year else ""}
+                LEFT JOIN nearby_school_polygons nsp ON spr.id = nsp.polygon_relationship_id
+                LEFT JOIN (
+                    SELECT DISTINCT location_id 
+                    FROM esri_demographic_data
+                ) esri ON lp.id = esri.location_id
+                {where_clause}
+                GROUP BY lp.id, lp.latitude, lp.longitude, lp.city, lp.state, esri.location_id
+                ORDER BY lp.id
+            """)
+            
+            coverage_results = conn.execute(coverage_query, params).fetchall()
+            
+            # Write location coverage CSV
+            coverage_file = OUTPUT_DIR / f"location_coverage_analysis{year_suffix}_{timestamp}.csv"
+            with open(coverage_file, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    'location_id', 'latitude', 'longitude', 'city', 'state',
+                    'schools_at_location', 'polygon_relationships', 'drive_times_available',
+                    'drive_times', 'total_nearby_schools', 'unique_nearby_schools', 'has_esri_data'
+                ])
+                
+                for row in coverage_results:
+                    writer.writerow([
+                        row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+                        str(row[8]) if row[8] else '[]', row[9], row[10], row[11]
+                    ])
+            
+            print(f"📄 Exported location coverage analysis: {coverage_file}")
+            
+            # Export nearby schools details
+            nearby_query = text(f"""
+                SELECT 
+                    spr.location_id,
+                    spr.drive_time,
+                    spr.data_year,
+                    lp.latitude,
+                    lp.longitude,
+                    nsp.school_uuid,
+                    nsp.relationship_type,
+                    s.school_id,
+                    s.name as school_name,
+                    nsp.created_at
+                FROM school_polygon_relationships spr
+                JOIN location_points lp ON spr.location_id = lp.id
+                JOIN nearby_school_polygons nsp ON spr.id = nsp.polygon_relationship_id
+                LEFT JOIN schools s ON nsp.school_uuid = s.uuid
+                {f"WHERE spr.data_year = :data_year" if data_year else ""}
+                ORDER BY spr.location_id, spr.drive_time, nsp.school_uuid
+            """)
+            
+            nearby_results = conn.execute(nearby_query, params).fetchall()
+            
+            # Write nearby schools CSV
+            nearby_file = OUTPUT_DIR / f"nearby_schools_details{year_suffix}_{timestamp}.csv"
+            with open(nearby_file, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    'location_id', 'drive_time', 'data_year', 'latitude', 'longitude',
+                    'school_uuid', 'relationship_type', 'school_id', 'school_name', 'created_at'
+                ])
+                
+                for row in nearby_results:
+                    writer.writerow(row)
+            
+            print(f"📄 Exported nearby schools details: {nearby_file}")
+            
+            return {
+                'coverage_file': str(coverage_file),
+                'nearby_file': str(nearby_file),
+                'coverage_records': len(coverage_results),
+                'nearby_records': len(nearby_results)
+            }
+            
+    except Exception as e:
+        print(f"❌ Error exporting detailed analysis: {str(e)}")
+        return None
+
+def print_analysis_report(summary, drive_time_breakdown, coverage_analysis, edc_coverage, validation_results):
+    """Print comprehensive analysis report"""
+    print("\n" + "="*80)
+    print("🏫 NEARBY SCHOOLS DATA ANALYSIS REPORT")
+    print("="*80)
+    
+    if summary:
+        print(f"\n📊 Overall Summary for {summary['data_year']}:")
+        print(f"  📈 Total polygon relationships: {summary['total_relationships']:,}")
+        print(f"  📍 Unique locations processed: {summary['unique_locations']:,}")
+        print(f"  🏫 Total nearby schools found: {summary['total_nearby_schools']:,}")
+        print(f"  🎯 Unique schools identified: {summary['unique_schools']:,}")
+        print(f"  🕐 Drive times available: {summary['unique_drive_times']}")
+        print(f"  📅 Years covered: {summary['unique_years']}")
+        
+        if summary['earliest_processed'] and summary['latest_processed']:
+            print(f"  📆 Processing range: {summary['earliest_processed']} to {summary['latest_processed']}")
+    else:
+        print("\n📭 No nearby schools data found")
+        return
+    
+    if drive_time_breakdown:
+        print(f"\n🕐 Drive Time Breakdown:")
+        for dt_info in drive_time_breakdown:
+            print(f"  {dt_info['drive_time']} minutes:")
+            print(f"    Polygons: {dt_info['polygon_count']:,}")
+            print(f"    Locations: {dt_info['unique_locations']:,}")
+            print(f"    Nearby schools: {dt_info['nearby_school_count']:,}")
+            print(f"    Unique schools: {dt_info['unique_schools']:,}")
+            print(f"    Avg schools/polygon: {dt_info['avg_schools_per_polygon']:.1f}")
+    
+    if coverage_analysis:
+        print(f"\n📍 Location Coverage Analysis:")
+        print(f"  Total locations with schools: {coverage_analysis['total_locations_with_schools']:,}")
+        print(f"  Locations with nearby data: {coverage_analysis['locations_with_nearby_data']:,}")
+        print(f"  Coverage percentage: {coverage_analysis['coverage_percentage']:.1f}%")
+        print(f"  Locations with ESRI data: {coverage_analysis['locations_with_esri_data']:,}")
+        print(f"  ESRI coverage percentage: {coverage_analysis['esri_coverage_percentage']:.1f}%")
+        
+        if coverage_analysis.get('drive_time_completeness'):
+            print(f"\n🕐 Drive Time Completeness:")
+            for count, locations in coverage_analysis['drive_time_completeness'].items():
+                print(f"  {count} drive times: {locations:,} locations")
+    
+    if edc_coverage:
+        print(f"\n🎯 EDC Schools Coverage:")
+        print(f"  Total EDC schools: {edc_coverage['total_edc_schools']:,}")
+        print(f"  With locations: {edc_coverage['edc_with_locations']:,} ({edc_coverage['location_coverage_pct']:.1f}%)")
+        print(f"  With nearby data: {edc_coverage['edc_with_nearby_data']:,} ({edc_coverage['nearby_coverage_pct']:.1f}%)")
+        print(f"  With ESRI data: {edc_coverage['edc_with_esri_data']:,} ({edc_coverage['esri_coverage_pct']:.1f}%)")
+    
+    if validation_results:
+        print(f"\n🔍 Data Integrity Validation:")
+        if validation_results['has_issues']:
+            print("  ⚠️  Issues found:")
+            if validation_results['orphaned_nearby_schools'] > 0:
+                print(f"    Orphaned nearby schools: {validation_results['orphaned_nearby_schools']:,}")
+            if validation_results['empty_polygon_relationships'] > 0:
+                print(f"    Empty polygon relationships: {validation_results['empty_polygon_relationships']:,}")
+            if validation_results['invalid_school_uuids'] > 0:
+                print(f"    Invalid school UUIDs: {validation_results['invalid_school_uuids']:,}")
+            if validation_results['missing_coordinates'] > 0:
+                print(f"    Missing coordinates: {validation_results['missing_coordinates']:,}")
+        else:
+            print("  ✅ No data integrity issues found")
+    
+    print("\n" + "="*80)
+
 def main():
     """Main execution function"""
     import argparse
@@ -645,12 +893,52 @@ def main():
     
     args = parser.parse_args()
     
-    print("🚀 Starting Nearby Schools Data Analysis...")
-    print("Analysis functionality will be implemented here")
+    proxy_process = None
     
-    # TODO: Implement the full analysis functionality
-    print("✅ Analysis completed successfully!")
-    return 0
+    try:
+        print("🚀 Starting Nearby Schools Data Analysis...")
+        print(f"📅 Data Year: {args.data_year or 'All Years'}")
+        
+        # Start proxy and create connection
+        proxy_process, port = start_cloud_sql_proxy()
+        engine = create_connection(port)
+        
+        # Load EDC schools for focused analysis
+        edc_schools = load_edc_schools() if not args.edc_only or os.path.exists(EDC_SCHOOLS_PATH) else set()
+        
+        # Gather analysis data
+        print("\n🔍 Gathering analysis data...")
+        
+        summary = get_nearby_schools_summary(engine, args.data_year)
+        drive_time_breakdown = get_drive_time_breakdown(engine, args.data_year)
+        coverage_analysis = get_location_coverage_analysis(engine, args.data_year)
+        edc_coverage = get_edc_schools_nearby_coverage(engine, edc_schools, args.data_year) if edc_schools else None
+        validation_results = validate_data_integrity(engine, args.data_year)
+        
+        # Print analysis report
+        print_analysis_report(summary, drive_time_breakdown, coverage_analysis, edc_coverage, validation_results)
+        
+        # Export detailed analysis if requested
+        if args.export and summary and summary['total_relationships'] > 0:
+            print(f"\n📤 Exporting detailed analysis...")
+            export_results = export_detailed_analysis(engine, args.data_year)
+            if export_results:
+                print(f"✅ Export completed:")
+                print(f"  📄 Coverage records: {export_results['coverage_records']:,}")
+                print(f"  📄 Nearby schools records: {export_results['nearby_records']:,}")
+        
+        print(f"\n✅ Analysis completed successfully!")
+        return 0
+        
+    except KeyboardInterrupt:
+        print("\n⚠️  Analysis interrupted by user")
+        return 1
+    except Exception as e:
+        print(f"\n❌ Analysis failed: {str(e)}")
+        return 1
+    finally:
+        if proxy_process:
+            stop_cloud_sql_proxy(proxy_process)
 
 if __name__ == "__main__":
     sys.exit(main()) 

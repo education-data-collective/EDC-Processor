@@ -93,8 +93,8 @@ def get_all_schools_with_locations(engine, data_year: int) -> List[Dict]:
                 SELECT 
                     s.id as school_id,
                     s.uuid as school_uuid,
-                    s.school_id as external_school_id,
-                    s.name as school_name,
+                    COALESCE(CONCAT(sd.ncessch, '-', sd.split_suffix), sd.ncessch, sd.state_school_id) as external_school_id,
+                    sd.system_name as school_name,
                     sl.location_id,
                     lp.latitude,
                     lp.longitude,
@@ -103,6 +103,7 @@ def get_all_schools_with_locations(engine, data_year: int) -> List[Dict]:
                 FROM schools s
                 JOIN school_locations sl ON s.id = sl.school_id
                 JOIN location_points lp ON sl.location_id = lp.id
+                JOIN school_directory sd ON s.id = sd.school_id AND sd.is_current = true
                 WHERE sl.data_year = :data_year
                     AND lp.latitude IS NOT NULL 
                     AND lp.longitude IS NOT NULL
