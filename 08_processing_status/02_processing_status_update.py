@@ -380,8 +380,8 @@ def update_processing_status_record(conn, school_id, data_year):
 def create_missing_processing_status_records(engine):
     """Create processing_status records for schools that don't have them"""
     try:
+        # First, get the missing records
         with engine.connect() as conn:
-            # Find schools without processing status records
             missing_query = text("""
                 SELECT DISTINCT s.id as school_id, sd.data_year
                 FROM schools s
@@ -392,13 +392,41 @@ def create_missing_processing_status_records(engine):
             """)
             
             missing_records = conn.execute(missing_query).fetchall()
+        
+        if not missing_records:
+            print("ℹ️  All schools already have processing status records")
+            return
             
-            if missing_records:
-                print(f"📝 Creating {len(missing_records)} missing processing status records...")
-                
-                for record in missing_records:
-                    school_id, data_year = record
+        print(f"📝 Creating {len(missing_records)} missing processing status records...")
+        
+        # Process in batches with individual transactions
+        batch_size = 1000
+        total_batches = (len(missing_records) + batch_size - 1) // batch_size
+        total_created = 0
+        
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, len(missing_records))
+            batch = missing_records[start_idx:end_idx]
+            
+            print(f"  📊 Processing batch {batch_num + 1}/{total_batches} ({len(batch)} records)")
+            
+            # Process each batch in its own transaction
+            try:
+                with engine.begin() as conn:
+                    # Prepare batch insert data
+                    batch_data = []
+                    now = datetime.now()
                     
+                    for record in batch:
+                        school_id, data_year = record
+                        batch_data.append({
+                            'school_id': school_id,
+                            'data_year': data_year,
+                            'now': now
+                        })
+                    
+                    # Execute batch insert
                     insert_query = text("""
                         INSERT INTO processing_status (
                             school_id, data_year, enrollment_processed, location_processed,
@@ -411,19 +439,26 @@ def create_missing_processing_status_records(engine):
                         )
                     """)
                     
-                    conn.execute(insert_query, {
-                        'school_id': school_id,
-                        'data_year': data_year,
-                        'now': datetime.now()
-                    })
+                    conn.execute(insert_query, batch_data)
+                    # Transaction commits automatically when exiting the 'with' block
+                    
+                total_created += len(batch)
                 
-                conn.commit()
-                print(f"✅ Created {len(missing_records)} missing processing status records")
-            else:
-                print("ℹ️  All schools already have processing status records")
+                # Progress update
+                if batch_num % 10 == 0 or batch_num == total_batches - 1:
+                    progress = ((batch_num + 1) / total_batches) * 100
+                    print(f"    Progress: {progress:.1f}% ({total_created:,}/{len(missing_records):,} records committed)")
+                    
+            except Exception as batch_error:
+                print(f"❌ Error processing batch {batch_num + 1}: {str(batch_error)}")
+                continue
+        
+        print(f"✅ Created {total_created:,} missing processing status records")
                 
     except Exception as e:
         print(f"❌ Error creating missing processing status records: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def update_all_processing_status(engine, limit=None):
     """Update all processing status records"""

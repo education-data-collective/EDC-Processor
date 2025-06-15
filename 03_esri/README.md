@@ -1,14 +1,13 @@
-# ESRI Unified Processor
+# ESRI Demographic Data Processing
 
-This module integrates the ESRI demographic data processing with the EDC Unified Database. It fetches coordinates from the `location_points` table, processes ESRI demographic data, and stores results in the `esri_demographic_data` table.
+This module processes ESRI demographic data for EDC schools, integrating with the EDC Unified Database. It analyzes coverage and processes demographic data for schools from the Firebase EDC schools dataset.
 
 ## Files Overview
 
-- **`fetch.py`** - Original ESRI data fetching functionality from ArcGIS
-- **`process.py`** - Original school-based processing logic
-- **`unified_processor.py`** - New unified processor for EDC database integration
-- **`cli.py`** - Command-line interface for easy processing
-- **`example_usage.py`** - Example usage scripts
+- **`01_esri_analysis.py`** - Analyzes ESRI demographic data coverage for EDC schools
+- **`02_esri_processing.py`** - Processes ESRI demographic data for EDC schools and updates processing_status
+- **`fetch.py`** - Core ESRI data fetching functionality from ArcGIS API
+- **`output/`** - Directory for analysis output files
 
 ## Quick Start
 
@@ -16,14 +15,15 @@ This module integrates the ESRI demographic data processing with the EDC Unified
 
 Make sure you have:
 - Cloud SQL Proxy installed (`cloud-sql-proxy` or `cloud_sql_proxy`)
-- Service account key file: `./etl-service-account-key.json`
-- Python dependencies: `sqlalchemy`, `psycopg2`, `arcgis`, `shapely`
+- Service account key file: `../etl-service-account-key.json`
+- Python dependencies: `sqlalchemy`, `psycopg2`, `arcgis`, `shapely`, `pandas`
 - ESRI credentials in `.env` file
+- EDC schools CSV file: `../edc_schools/firebase_schools_06152025.csv`
 
 ### 2. Install Dependencies
 
 ```bash
-pip install sqlalchemy psycopg2-binary arcgis shapely python-dotenv
+pip install sqlalchemy psycopg2-binary arcgis shapely python-dotenv pandas
 ```
 
 ### 3. Set up ESRI Credentials
@@ -35,36 +35,44 @@ ESRI_PASSWORD=your_password_or_secret_ref
 ESRI_URL=https://www.arcgis.com
 ```
 
-### 4. Basic Usage
+### 4. Usage
 
-#### List Available Locations
+#### Analyze ESRI Coverage for EDC Schools
 ```bash
-python esri/cli.py list-locations
+python 03_esri/01_esri_analysis.py
 ```
 
-#### Process a Single Location
+This will:
+- Analyze current ESRI demographic data coverage
+- Show breakdown by drive time (5, 10, 15 minutes)
+- Identify EDC schools missing ESRI data
+- Export detailed analysis to CSV files
+
+#### Process ESRI Data for EDC Schools
 ```bash
-python esri/cli.py process-single --location-id 1
+# Process schools needing ESRI data (respects 30-day cache)
+python 03_esri/02_esri_processing.py
+
+# Force refresh all EDC schools
+python 03_esri/02_esri_processing.py --force-refresh
+
+# Process with limits (for testing)
+python 03_esri/02_esri_processing.py --limit 10
+
+# Use specific data year for processing_status updates
+python 03_esri/02_esri_processing.py --data-year 2023
 ```
 
-#### Process Multiple Locations
-```bash
-python esri/cli.py process-multiple --location-ids "1,2,3,4,5"
-```
-
-#### Check Existing Data
-```bash
-python esri/cli.py check-data
-```
-
-#### Force Refresh Data
-```bash
-python esri/cli.py process-single --location-id 1 --force-refresh
-```
+This will:
+- Find EDC schools needing ESRI processing
+- Fetch demographic data from ESRI API
+- Store data in `esri_demographic_data` table
+- Validate data completeness
+- Update `processing_status.esri_processed` flag
 
 ## Database Schema
 
-The processor creates an `esri_demographic_data` table with the following structure:
+The processor uses the `esri_demographic_data` table with the following structure:
 
 ### Core Fields
 - `id` - Primary key
@@ -112,37 +120,24 @@ The processor creates an `esri_demographic_data` table with the following struct
 ### Spatial Data
 - `drive_time_polygon` - JSONB polygon geometry for the drive-time area
 
-## Python API Usage
-
-```python
-from esri.unified_processor import (
-    start_cloud_sql_proxy, 
-    stop_cloud_sql_proxy, 
-    create_connection,
-    process_location
-)
-
-# Start proxy and connect
-proxy_process, port = start_cloud_sql_proxy()
-engine = create_connection(port)
-
-try:
-    # Process a location
-    success = process_location(engine, location_id=1, force_refresh=True)
-    if success:
-        print("Processing completed successfully!")
-finally:
-    # Cleanup
-    stop_cloud_sql_proxy(proxy_process)
-```
-
 ## Data Processing Flow
 
-1. **Coordinate Lookup**: Fetches lat/lon from `location_points` table
-2. **ESRI API Call**: Uses ArcGIS to get demographic data for 5/10/15 minute drive times
-3. **Data Transformation**: Calculates percentages and validates data
-4. **Database Storage**: Saves to `esri_demographic_data` table with proper constraints
-5. **Caching**: Avoids re-processing recent data (within 30 days)
+1. **EDC School Loading**: Loads school IDs from Firebase EDC schools CSV
+2. **Coverage Analysis**: Identifies schools with missing/incomplete ESRI data
+3. **Coordinate Lookup**: Fetches lat/lon from school locations via `location_points` table
+4. **ESRI API Call**: Uses ArcGIS to get demographic data for 5/10/15 minute drive times
+5. **Data Transformation**: Calculates percentages and validates data
+6. **Database Storage**: Saves to `esri_demographic_data` table with proper constraints
+7. **Status Update**: Updates `processing_status.esri_processed` flag
+8. **Caching**: Avoids re-processing recent data (within 30 days) unless forced
+
+## Processing Status Integration
+
+The processing updates the `processing_status` table:
+
+- **`esri_processed = true`**: School has complete ESRI data (all 3 drive times with valid data)
+- **`esri_processed = false`**: School missing ESRI data or processing failed
+- **`last_processed_at`**: Updated when processing attempts are made
 
 ## Error Handling
 
@@ -155,20 +150,50 @@ The processor includes comprehensive error handling:
 
 ## Performance Considerations
 
-- **Caching**: Recent data (within 30 days) is not re-processed unless `force_refresh=True`
-- **Rate Limiting**: 2-second delays between API calls in batch processing
+- **Caching**: Recent data (within 30 days) is not re-processed unless `--force-refresh` is used
+- **Rate Limiting**: 2-second delays between API calls to respect ESRI limits
 - **Transactions**: Atomic operations ensure data consistency
 - **Indexing**: Database indexes on location_id, drive_time, and processed_at
+
+## Output Files
+
+Analysis generates CSV files in the `output/` directory:
+
+- `esri_all_data_YYYYMMDD_HHMMSS.csv` - Complete ESRI data export
+- `esri_edc_schools_analysis_YYYYMMDD_HHMMSS.csv` - EDC schools coverage analysis
+
+## Common Use Cases
+
+### Daily Processing
+```bash
+# Run analysis to see current status
+python 03_esri/01_esri_analysis.py
+
+# Process any schools needing updates
+python 03_esri/02_esri_processing.py
+```
+
+### Bulk Refresh
+```bash
+# Force refresh all EDC schools
+python 03_esri/02_esri_processing.py --force-refresh
+```
+
+### Testing/Development
+```bash
+# Test with limited schools
+python 03_esri/02_esri_processing.py --limit 5 --force-refresh
+```
 
 ## Monitoring and Debugging
 
 ### Check Processing Status
 ```bash
-python esri/cli.py check-data
+python 03_esri/01_esri_analysis.py
 ```
 
 ### View Logs
-The processor uses structured logging. Set log level:
+The processor uses structured logging. For debug mode, set:
 ```python
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -176,43 +201,41 @@ logging.basicConfig(level=logging.DEBUG)
 
 ### Common Issues
 
-1. **Cloud SQL Proxy not found**: Install with `gcloud components install cloud_sql_proxy`
-2. **Service account issues**: Ensure `./etl-service-account-key.json` exists and has proper permissions
+1. **Cloud SQL Proxy not found**: Install with `cloud_components install cloud_sql_proxy`
+2. **Service account issues**: Ensure `../etl-service-account-key.json` exists and has proper permissions
 3. **ESRI authentication**: Check `.env` file and credentials
-4. **Location not found**: Use `list-locations` to see available location_ids
+4. **EDC schools file missing**: Ensure `../edc_schools/firebase_schools_06152025.csv` exists
+5. **Location not found**: School may not have location_points data
 
 ## Example Queries
 
 After processing, you can query the data:
 
 ```sql
--- Get all demographic data for a location
-SELECT * FROM esri_demographic_data WHERE location_id = 1;
+-- Get all demographic data for EDC schools
+SELECT ed.*, sl.school_id 
+FROM esri_demographic_data ed
+JOIN school_locations sl ON ed.location_id = sl.location_id
+WHERE sl.school_id IN (SELECT school_id FROM edc_schools_list);
 
--- Compare drive times for a location
-SELECT drive_time, per_hisp_child_20, per_wht_child_20, medhinc_cy 
-FROM esri_demographic_data 
-WHERE location_id = 1 
-ORDER BY drive_time;
+-- Compare drive times for a school
+SELECT sl.school_id, ed.drive_time, ed.per_hisp_child_20, ed.per_wht_child_20, ed.medhinc_cy 
+FROM esri_demographic_data ed
+JOIN school_locations sl ON ed.location_id = sl.location_id
+WHERE sl.school_id = 'your_school_id'
+ORDER BY ed.drive_time;
 
--- Find locations with high Hispanic child population
-SELECT location_id, drive_time, per_hisp_child_20
-FROM esri_demographic_data 
-WHERE per_hisp_child_20 > 0.5 
-ORDER BY per_hisp_child_20 DESC;
+-- Find EDC schools with high Hispanic child population
+SELECT sl.school_id, ed.drive_time, ed.per_hisp_child_20
+FROM esri_demographic_data ed
+JOIN school_locations sl ON ed.location_id = sl.location_id
+WHERE ed.per_hisp_child_20 > 0.5 
+  AND sl.school_id IN (SELECT school_id FROM edc_schools_list)
+ORDER BY ed.per_hisp_child_20 DESC;
 
--- Get recent processing summary
-SELECT COUNT(*) as total_records,
-       COUNT(DISTINCT location_id) as unique_locations,
-       MAX(processed_at) as last_update
-FROM esri_demographic_data;
-```
-
-## Integration with Original ESRI Module
-
-This unified processor is designed to work alongside the original ESRI processing for schools:
-
-- **Unified Processor**: For general location-based demographic analysis
-- **Original Process**: School-specific analysis with polygon relationships
-
-Both can coexist and share the same ESRI credentials and data fetching logic. 
+-- Check processing status for EDC schools
+SELECT ps.school_id, ps.esri_processed, ps.last_processed_at
+FROM processing_status ps
+WHERE ps.school_id IN (SELECT school_id FROM edc_schools_list)
+  AND ps.esri_processed = true;
+``` 
