@@ -13,6 +13,7 @@ import subprocess
 import time
 import signal
 import socket
+import csv
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import logging
@@ -490,7 +491,56 @@ def save_metrics_to_database(engine, metrics_list: List[Dict], table_name: str =
     
     return success_count, error_count
 
-def calculate_unified_metrics(limit: Optional[int] = None, table_name: str = 'school_metrics') -> Dict[str, int]:
+def export_metrics_to_csv(metrics_list: List[Dict], filename: str) -> bool:
+    """Export metrics to CSV file"""
+    if not metrics_list:
+        logger.warning("No metrics to export to CSV")
+        return False
+    
+    try:
+        # Define CSV headers based on metrics structure
+        headers = [
+            'school_id', 'drive_time', 'ncessch', 'calculated_at',
+            'population_past', 'population_current', 'population_future',
+            'population_trend_past_to_latest', 'population_trend_latest_to_projected',
+            'population_trend_status', 'population_projection_status',
+            'market_share_past', 'market_share_current', 'market_share_trend', 'market_share_status',
+            'enrollment_past', 'enrollment_current',
+            'public_enrollment_projected', 'updated_enrollment_projected', 'projection_type',
+            'enrollment_trend_past_to_latest', 'enrollment_trend_latest_to_projected',
+            'enrollment_trend_status', 'enrollment_projection_status',
+            'is_newer', 'has_projections',
+            'membership_data_year', 'comparison_year', 'esri_data_year', 'drive_time_minutes'
+        ]
+        
+        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=headers)
+            writer.writeheader()
+            
+            for metrics in metrics_list:
+                # Flatten the data_versions into the main record
+                row = {}
+                for header in headers:
+                    if header in ['membership_data_year', 'comparison_year', 'esri_data_year', 'drive_time_minutes']:
+                        # Extract from data_versions
+                        data_versions = metrics.get('data_versions', {})
+                        if isinstance(data_versions, str):
+                            import json
+                            data_versions = json.loads(data_versions)
+                        row[header] = data_versions.get(header, '')
+                    else:
+                        row[header] = metrics.get(header, '')
+                
+                writer.writerow(row)
+        
+        logger.info(f"Successfully exported {len(metrics_list)} metrics to {filename}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error exporting metrics to CSV: {str(e)}")
+        return False
+
+def calculate_unified_metrics(limit: Optional[int] = None, table_name: str = 'school_metrics', export_csv: Optional[str] = None) -> Dict[str, int]:
     """Main function to calculate metrics using unified database"""
     global proxy_process
     
@@ -546,6 +596,11 @@ def calculate_unified_metrics(limit: Optional[int] = None, table_name: str = 'sc
         logger.info(f"Saving {len(metrics_list)} metrics records to database...")
         success_count, error_count = save_metrics_to_database(engine, metrics_list, table_name)
         
+        # Export metrics to CSV
+        if export_csv:
+            logger.info(f"Exporting metrics to CSV file: {export_csv}")
+            export_metrics_to_csv(metrics_list, export_csv)
+        
         results = {
             'total_schools': len(schools),
             'total_metrics': len(metrics_list),
@@ -578,10 +633,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Calculate school metrics using unified database')
     parser.add_argument('--limit', type=int, help='Limit number of schools to process (for testing)')
     parser.add_argument('--table', type=str, default='school_metrics', help='Table name for metrics storage')
+    parser.add_argument('--export', type=str, help='CSV file to export metrics to')
     args = parser.parse_args()
     
     try:
-        results = calculate_unified_metrics(limit=args.limit, table_name=args.table)
+        results = calculate_unified_metrics(limit=args.limit, table_name=args.table, export_csv=args.export)
         print(f"Results: {results}")
     except Exception as e:
         print(f"Error: {str(e)}")
