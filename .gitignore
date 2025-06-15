@@ -4,6 +4,9 @@
 etl-service-account-key.json
 credentials.json
 
+# Output files
+output/
+
 # Python
 __pycache__/
 *.py[cod]
