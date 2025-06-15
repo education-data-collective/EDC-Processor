@@ -366,8 +366,7 @@ def update_location_coordinates(engine, location_id, lat, lng, county, formatted
                 update_parts.append("county = :county")
                 params['county'] = county
             
-            # Always update the updated_at timestamp
-            update_parts.append("updated_at = CURRENT_TIMESTAMP")
+            # Note: No updated_at column in location_points table
             
             if update_parts:
                 query = f"""
@@ -398,7 +397,7 @@ def update_location_county(engine, location_id, county, logger):
         with engine.begin() as conn:
             query = """
                 UPDATE location_points 
-                SET county = :county, updated_at = CURRENT_TIMESTAMP
+                SET county = :county
                 WHERE id = :location_id
             """
             
