@@ -8,15 +8,60 @@ The Nearby Schools Processor uses ESRI demographic data (specifically drive-time
 
 ## Files
 
-- **`processor.py`** - Main processing engine
+### New Structure (v2.0)
+Following the pattern from `03_esri`, this module has been restructured:
+
+- **`01_nearby_schools_analysis.py`** - Analysis and reporting script
+- **`02_nearby_schools_processing.py`** - Processing script for missing data
+- **`fetch.py`** - Core processing logic module
+
+### Legacy Files (Backward Compatible)
+- **`processor.py`** - Original monolithic processor
 - **`cli.py`** - Command-line interface
 - **`README.md`** - This documentation
+
+## New Usage (Recommended)
+
+### Analysis Script
+```bash
+# Analyze all nearby schools data
+python 01_nearby_schools_analysis.py
+
+# Analyze specific year with export
+python 01_nearby_schools_analysis.py --data-year 2024 --export
+
+# Focus on EDC schools only
+python 01_nearby_schools_analysis.py --edc-only --export
+```
+
+### Processing Script
+```bash
+# Process missing data for a year
+python 02_nearby_schools_processing.py --data-year 2024
+
+# Process only EDC schools
+python 02_nearby_schools_processing.py --data-year 2024 --edc-only
+
+# Force refresh existing data
+python 02_nearby_schools_processing.py --data-year 2024 --force-refresh
+
+# Process specific locations
+python 02_nearby_schools_processing.py --data-year 2024 --location-ids 1,2,3
+```
+
+## Recommended Workflow
+
+1. **Analysis First**: Run `01_nearby_schools_analysis.py` to understand current data coverage
+2. **Identify Gaps**: Review analysis output to identify missing processing
+3. **Process Missing Data**: Use `02_nearby_schools_processing.py` to fill gaps
+4. **Validate Results**: Re-run analysis to confirm processing success
+5. **Export Reports**: Use `--export` flag to generate detailed CSV reports
 
 ## Prerequisites
 
 1. **ESRI Data**: Must have ESRI demographic data processed first (from the `esri/` module)
 2. **School Location Data**: Schools must be linked to locations via the `school_locations` table
-3. **Dependencies**: `sqlalchemy`, `psycopg2-binary`, `shapely`
+3. **Dependencies**: `sqlalchemy`, `psycopg2-binary`, `shapely`, `pandas`
 
 ## Quick Start
 
