@@ -4,9 +4,10 @@ School Projection Models
 Manages enrollment projections and forecasting data for schools.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum, Index, UniqueConstraint, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import JSONB
 
 from .base import Base
 from .enums import ProjectionType
@@ -16,24 +17,22 @@ class SchoolProjection(Base):
     
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey('schools.id'), nullable=False)
-    data_year = Column(Integer, nullable=False)
-    school_year = Column(String(9), nullable=False)
-    projection_type = Column(Enum(ProjectionType, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    type = Column(Enum(ProjectionType, values_callable=lambda x: [e.value for e in x]), 
+                  nullable=False, server_default='public')
     
-    # Projection data
-    total = Column(Integer, nullable=False)
-    american_indian = Column(Integer)
-    asian = Column(Integer)
-    black = Column(Integer)
-    hispanic = Column(Integer)
-    pacific_islander = Column(Integer)
-    white = Column(Integer)
-    two_or_more_races = Column(Integer)
-    frl_count = Column(Integer)
+    # Frequently accessed fields as columns for performance  
+    entry_grade = Column(String(20))
+    generated_at = Column(DateTime, nullable=False)
+    processing_batch_id = Column(String(50))
     
-    # Data provenance
-    source_id = Column(Integer, ForeignKey('school_sources.id'))
-    is_user_edited = Column(Boolean, default=False)
+    # Main projection data as JSONB
+    entry_grade_estimates = Column(JSONB)  # {high, low, median, outer_max, outer_min}
+    survival_rates = Column(JSONB)         # {oneYear: {Grade 10: 0.98, ...}, threeYear: {...}, fiveYear: {...}}
+    forecast_survival_rates = Column(JSONB) # {Grade 10: {max, median, min, outer_min, outer_max}, ...}
+    projections = Column(JSONB, nullable=False) # {max: {2024-2025: {Grade 9: 150, ...}}, median: {...}, ...}
+    
+    # Metadata
+    source_data_years = Column(JSONB)      # ["2019-2020", "2020-2021", ...]
     
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
@@ -41,10 +40,17 @@ class SchoolProjection(Base):
     
     # Relationships
     school = relationship("School", back_populates="projections")
-    source = relationship("SchoolSource")
     
     __table_args__ = (
-        UniqueConstraint('school_id', 'data_year', 'school_year', 'projection_type', 
-                         name='uix_school_projection'),
-        Index('idx_school_projection', school_id, data_year),
+        UniqueConstraint('school_id', 'type', name='idx_school_projections_lookup'),
+        Index('idx_projections_gin', 'projections', postgresql_using='gin'),
+        Index('idx_survival_rates_gin', 'survival_rates', postgresql_using='gin'),
+        Index('idx_forecast_survival_gin', 'forecast_survival_rates', postgresql_using='gin'),
+        Index('idx_entry_estimates_gin', 'entry_grade_estimates', postgresql_using='gin'),
+        Index('idx_public_projections', 'school_id', 'generated_at', 
+              postgresql_where="type = 'public'"),
+        Index('idx_batch_generated', 'processing_batch_id', 'generated_at'),
+        Index('idx_generated_at', 'generated_at'),
+        Index('idx_entry_grade', 'entry_grade', 
+              postgresql_where='entry_grade IS NOT NULL'),
     ) 
